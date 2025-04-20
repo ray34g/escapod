@@ -6,6 +6,7 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/pre-reboot-hook}"
 LOGDIR="${LOGDIR:-/var/log/pre-reboot-hook}"
 LOGFILE="$LOGDIR/info_${STAMP}.log"
 PREV="$LOGDIR/info_prev.log"
+BACKUP_DIR="${BACKUP_DIR:-/var/log/pre-reboot-hook/backups}"
 
 # --- Environment Variables ---
 if [[ -f "$CONFIG_DIR/pre-reboot-hook.env" ]]; then
@@ -59,7 +60,7 @@ do_backup() {
     if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
       aws s3 cp "$(realpath "$tmpfile")" \
     "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/${name}" \
-    --region "$AWS_REGION"
+    --region "$AWS_REGION" || true
       # podman run --rm --network host \
       #   --security-opt label=disable \
       #   -e AWS_DEFAULT_REGION="$AWS_REGION" \
@@ -108,8 +109,8 @@ The following diagnostic and configuration information has been collected:
  - System settings (sysctl, mount info)
  - Kubernetes / CRI-O / Docker Compose (if applicable)
 
-$( $UPLOAD_TO_S3 && echo "Backup uploaded to: s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
-$( $KEEP_LOCAL_BACKUP && echo "Local backup saved to: ${BACKUP_DIR}" )
+$( [[ "${UPLOAD_TO_S3:-}" == "true" ]] && echo "Backup uploaded to: s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
+$( [[ "${KEEP_LOCAL_BACKUP:-}" == "true" ]] && echo "Local backup saved to: ${BACKUP_DIR}" )
 
 (This message was automatically generated.)
 EOF
@@ -149,7 +150,7 @@ EOF
   # Send
   aws ses send-raw-email \
   --cli-input-json "file://$(realpath "$jsonfile")" \
-  --region "$AWS_REGION"
+  --region "$AWS_REGION" || true
   # podman run --rm --network host \
   #   --security-opt label=disable \
   #   -e HOME=/root \
@@ -172,8 +173,8 @@ Time: $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')
 Please save your work and log out.
 
 System status and configurations have been archived.
-$( $UPLOAD_TO_S3 && echo "Backup sent to S3: ${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
-$( $KEEP_LOCAL_BACKUP && echo "Local copy saved in: ${BACKUP_DIR}" )
+$( [[ "${UPLOAD_TO_S3:-}" == "true" ]] && echo "Backup sent to S3: ${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
+$( [[ "${KEEP_LOCAL_BACKUP:-}" == "true" ]] && echo "Local copy saved in: ${BACKUP_DIR}" )
 "
   echo "$msg" | wall
   logger "$msg"
