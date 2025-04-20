@@ -1,0 +1,80 @@
+variant: fcos
+version: 1.5.0
+
+storage:
+  files:
+    - path: /opt/pre-reboot-hook/pre-reboot-hook.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/usr/bin/env bash
+          # -- Paste pre-reboot-hook.sh Content here --
+
+    - path: /etc/systemd/system/pre-reboot-hook.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Collect info, backup, mail (Fedora CoreOS)
+          DefaultDependencies=no
+          Before=shutdown.target reboot.target halt.target
+          ConditionPathExists=/opt/pre-reboot-hook/pre-reboot-hook.sh
+
+          [Service]
+          Type=oneshot
+          ExecStart=/opt/pre-reboot-hook/pre-reboot-hook.sh
+
+          [Install]
+          WantedBy=shutdown.target
+
+    - path: /etc/systemd/system/delayed-reboot.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Delayed reboot (1 min)
+          Requires=pre-reboot-hook.service
+          After=pre-reboot-hook.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/systemctl reboot
+
+    - path: /etc/systemd/system/delayed-reboot.timer
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Run delayed reboot after 1 minute
+
+          [Timer]
+          OnActiveSec=1min
+          AccuracySec=1s
+          Unit=delayed-reboot.service
+
+          [Install]
+          WantedBy=multi-user.target
+    - path: /root/.aws/config
+      mode: 0600
+      contents:
+        inline: |
+          [default]
+          region = ap-northeast-1
+
+    - path: /root/.aws/credentials
+      mode: 0600
+      contents:
+        inline: |
+          [default]
+          aws_access_key_id = YOUR_ACCESS_KEY_ID
+          aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
+systemd:
+  units:
+    - name: pre-reboot-hook.service
+      enabled: true
+
+    - name: delayed-reboot.service
+      enabled: false
+
+    - name: delayed-reboot.timer
+      enabled: true

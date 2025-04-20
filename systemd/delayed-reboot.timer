@@ -1,0 +1,10 @@
+[Unit]
+Description=Run delayed-reboot.service after 1 minute
+
+[Timer]
+OnActiveSec=1min
+Unit=delayed-reboot.service
+AccuracySec=1s
+
+[Install]
+WantedBy=multi-user.target
