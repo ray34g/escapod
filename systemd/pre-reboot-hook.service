@@ -2,11 +2,12 @@
 Description=Collect info, backup, mail (Fedora CoreOS)
 DefaultDependencies=no
 Before=shutdown.target reboot.target halt.target
-ConditionPathExists=/opt/pre-reboot-hook/pre-reboot-hook.sh
+ConditionPathExists=/usr/local/bin/pre-reboot-hook.sh
 
 [Service]
 Type=oneshot
-ExecStart=/opt/pre-reboot-hook/pre-reboot-hook.sh
+EnvironmentFile=/etc/pre-reboot-hook/pre-reboot-hook.env
+ExecStart=/usr/local/bin/pre-reboot-hook.sh
 
 [Install]
 WantedBy=shutdown.target

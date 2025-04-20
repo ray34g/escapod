@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Environment Variables ---
-if [[ -f "${BASE:-/opt/pre-reboot-hook}/pre-reboot-hook.env" ]]; then
-  set -a
-  source "${BASE:-/opt/pre-reboot-hook}/pre-reboot-hook.env"
-  set +a
-fi
-
-STAMP="${STAMP:-$(date '+%Y%m%d_%H%M%S')}"
-BASE="${BASE:-/opt/pre-reboot-hook}"
-LOGDIR="${LOGDIR:-/var/log/pre_reboot}"
+STAMP="${STAMP:-$(date '+%Y%m%d%H%M%S')}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/pre-reboot-hook}"
+LOGDIR="${LOGDIR:-/var/log/pre-reboot-hook}"
 LOGFILE="$LOGDIR/info_${STAMP}.log"
 PREV="$LOGDIR/info_prev.log"
-BACKUP_DIR="$LOGDIR/backups/${STAMP}"
+
+# --- Environment Variables ---
+if [[ -f "$CONFIG_DIR/pre-reboot-hook.env" ]]; then
+  set -a
+  source "$CONFIG_DIR/pre-reboot-hook.env"
+  set +a
+fi
 
 mkdir -p "$LOGDIR"
 
@@ -65,12 +64,12 @@ do_backup() {
         -v "$(dirname "$tmpfile"):/var/tmp:ro" \
         amazon/aws-cli \
           s3 cp "/var/tmp/$(basename "$tmpfile")" \
-          "s3://${S3_BUCKET}/${S3_PREFIX}/${STAMP}/${name}"
+          "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}_${name}"
     fi
 
     if [[ "${KEEP_LOCAL_BACKUP}" == "true" ]]; then
       mkdir -p "$BACKUP_DIR"
-      mv "$tmpfile" "$BACKUP_DIR/${name}"
+      mv "$tmpfile" "$BACKUP_DIR/${STAMP}_${name}"
     else
       rm -f "$tmpfile"
     fi
@@ -106,7 +105,7 @@ The following diagnostic and configuration information has been collected:
  - System settings (sysctl, mount info)
  - Kubernetes / CRI-O / Docker Compose (if applicable)
 
-$( $UPLOAD_TO_S3 && echo "Backup uploaded to: s3://${S3_BUCKET}/${S3_PREFIX}/${STAMP}/" )
+$( $UPLOAD_TO_S3 && echo "Backup uploaded to: s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}_${name}/" )
 $( $KEEP_LOCAL_BACKUP && echo "Local backup saved to: ${BACKUP_DIR}" )
 
 (This message was automatically generated.)
@@ -116,8 +115,8 @@ EOF
 
   # MIME 
   {
-    printf 'From:"%s" <%s>\n' "$from_name" "$from_email"
-    printf 'To:%s\n' "$to_email"
+    printf 'From:"%s" <%s>\n' "$FROM_NAME" "$FROM_ADDR"
+    printf 'To:%s\n' "$TO_ADDRS"
     printf 'Subject:%s\n' "$subject"
     printf 'MIME-Version: 1.0\n'
     printf 'Content-Type: multipart/mixed; boundary="%s"\n' "$boundary"
@@ -167,7 +166,7 @@ Time: $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')
 Please save your work and log out.
 
 System status and configurations have been archived.
-$( $UPLOAD_TO_S3 && echo "Backup sent to S3: ${S3_BUCKET}/${S3_PREFIX}/${STAMP}/" )
+$( $UPLOAD_TO_S3 && echo "Backup sent to S3: ${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}_${name}/" )
 $( $KEEP_LOCAL_BACKUP && echo "Local copy saved in: ${BACKUP_DIR}" )
 "
   echo "$msg" | wall
