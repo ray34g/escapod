@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Environment Variables ---
-if [[ -f "${BASE:-/opt/pre-reboot-hook}/pre-reboot-hook.env" ]]; then
-  set -a
-  source "${BASE:-/opt/pre-reboot-hook}/pre-reboot-hook.env"
-  set +a
-fi
-
-STAMP="${STAMP:-$(date '+%Y%m%d_%H%M%S')}"
-BASE="${BASE:-/opt/pre-reboot-hook}"
-LOGDIR="${LOGDIR:-/var/log/pre_reboot}"
+STAMP="${STAMP:-$(date '+%Y%m%d%H%M%S')}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/pre-reboot-hook}"
+LOGDIR="${LOGDIR:-/var/log/pre-reboot-hook}"
 LOGFILE="$LOGDIR/info_${STAMP}.log"
 PREV="$LOGDIR/info_prev.log"
-BACKUP_DIR="$LOGDIR/backups/${STAMP}"
+
+# --- Environment Variables ---
+if [[ -f "$CONFIG_DIR/pre-reboot-hook.env" ]]; then
+  set -a
+  source "$CONFIG_DIR/pre-reboot-hook.env"
+  set +a
+fi
 
 mkdir -p "$LOGDIR"
 
@@ -58,19 +57,22 @@ do_backup() {
     chmod 644 "$tmpfile"
     # --- S3 Upload ---
     if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
-      podman run --rm --network host \
-        --security-opt label=disable \
-        -e AWS_DEFAULT_REGION="$AWS_REGION" \
-        -v /root/.aws:/root/.aws:ro \
-        -v "$(dirname "$tmpfile"):/var/tmp:ro" \
-        amazon/aws-cli \
-          s3 cp "/var/tmp/$(basename "$tmpfile")" \
-          "s3://${S3_BUCKET}/${S3_PREFIX}/${STAMP}/${name}"
+      aws s3 cp "$(realpath "$tmpfile")" \
+    "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/${name}" \
+    --region "$AWS_REGION"
+      # podman run --rm --network host \
+      #   --security-opt label=disable \
+      #   -e AWS_DEFAULT_REGION="$AWS_REGION" \
+      #   -v /root/.aws:/root/.aws:ro \
+      #   -v "$(dirname "$tmpfile"):/var/tmp:ro" \
+      #   amazon/aws-cli \
+      #     s3 cp "/var/tmp/$(basename "$tmpfile")" \
+      #     "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/${name}"
     fi
 
     if [[ "${KEEP_LOCAL_BACKUP}" == "true" ]]; then
       mkdir -p "$BACKUP_DIR"
-      mv "$tmpfile" "$BACKUP_DIR/${name}"
+      mv "$tmpfile" "$BACKUP_DIR/${STAMP}_${name}"
     else
       rm -f "$tmpfile"
     fi
@@ -80,7 +82,7 @@ do_backup() {
 
 #----- SES Email (Podman + aws-cli) -----
 send_mail() {
-  local subject="[System] $(hostname) is scheduled to reboot at $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')"
+  local subject="[system] $(hostname) is Scheduled to Reboot at $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')"
   local bodyfile="/var/tmp/mail_body_${STAMP}.txt"
   local emailfile="/var/tmp/email_raw_${STAMP}.txt"
   local encodedfile="/var/tmp/email_raw_${STAMP}.b64"
@@ -91,7 +93,7 @@ send_mail() {
 
   # BODY 
   cat >"$bodyfile" <<EOF
-The system [$(hostname)] is scheduled to reboot shortly.
+[$(hostname)] is scheduled to reboot shortly.
 
 ⏰ Time: $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')
 📍 Host: $(hostname)
@@ -106,7 +108,7 @@ The following diagnostic and configuration information has been collected:
  - System settings (sysctl, mount info)
  - Kubernetes / CRI-O / Docker Compose (if applicable)
 
-$( $UPLOAD_TO_S3 && echo "Backup uploaded to: s3://${S3_BUCKET}/${S3_PREFIX}/${STAMP}/" )
+$( $UPLOAD_TO_S3 && echo "Backup uploaded to: s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
 $( $KEEP_LOCAL_BACKUP && echo "Local backup saved to: ${BACKUP_DIR}" )
 
 (This message was automatically generated.)
@@ -116,8 +118,8 @@ EOF
 
   # MIME 
   {
-    printf 'From:"%s" <%s>\n' "$from_name" "$from_email"
-    printf 'To:%s\n' "$to_email"
+    printf 'From:"%s" <%s>\n' "$FROM_NAME" "$FROM_ADDR"
+    printf 'To:%s\n' "$TO_ADDRS"
     printf 'Subject:%s\n' "$subject"
     printf 'MIME-Version: 1.0\n'
     printf 'Content-Type: multipart/mixed; boundary="%s"\n' "$boundary"
@@ -145,15 +147,18 @@ EOF
 EOF
 
   # Send
-  podman run --rm --network host \
-    --security-opt label=disable \
-    -e HOME=/root \
-    -e AWS_DEFAULT_REGION="$AWS_REGION" \
-    -v /root/.aws:/root/.aws:ro \
-    -v /var/tmp:/mail:ro \
-    amazon/aws-cli \
-      ses send-raw-email \
-        --cli-input-json file:///mail/$(basename "$jsonfile")
+  aws ses send-raw-email \
+  --cli-input-json "file://$(realpath "$jsonfile")" \
+  --region "$AWS_REGION"
+  # podman run --rm --network host \
+  #   --security-opt label=disable \
+  #   -e HOME=/root \
+  #   -e AWS_DEFAULT_REGION="$AWS_REGION" \
+  #   -v /root/.aws:/root/.aws:ro \
+  #   -v /var/tmp:/mail:ro \
+  #   amazon/aws-cli \
+  #     ses send-raw-email \
+  #       --cli-input-json file:///mail/$(basename "$jsonfile")
 
   # Cleanup
   rm -f "$bodyfile" "$emailfile" "$encodedfile" "$jsonfile"
@@ -161,13 +166,13 @@ EOF
 
 notify_terminals() {
   msg="
-This system[$(hostname)] will reboot in 1 minute.
+[$(hostname)] will reboot in 1 minute.
 
 Time: $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')
 Please save your work and log out.
 
 System status and configurations have been archived.
-$( $UPLOAD_TO_S3 && echo "Backup sent to S3: ${S3_BUCKET}/${S3_PREFIX}/${STAMP}/" )
+$( $UPLOAD_TO_S3 && echo "Backup sent to S3: ${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
 $( $KEEP_LOCAL_BACKUP && echo "Local copy saved in: ${BACKUP_DIR}" )
 "
   echo "$msg" | wall

@@ -1,8 +1,0 @@
-[Unit]
-Description=Delayed reboot (1 min)
-Requires=pre-reboot-hook.service
-After=pre-reboot-hook.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/systemctl reboot
