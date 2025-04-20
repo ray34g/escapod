@@ -6,19 +6,11 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/pre-reboot-hook}"
 LOGDIR="${LOGDIR:-/var/log/pre-reboot-hook}"
 LOGFILE="$LOGDIR/info_${STAMP}.log"
 PREV="$LOGDIR/info_prev.log"
-
-STAMP="${STAMP:-$(date '+%Y%m%d%H%M%S')}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/pre-reboot-hook}"
-LOGDIR="${LOGDIR:-/var/log/pre-reboot-hook}"
-LOGFILE="$LOGDIR/info_${STAMP}.log"
-PREV="$LOGDIR/info_prev.log"
 BACKUP_DIR="${BACKUP_DIR:-/var/log/pre-reboot-hook/backups}"
 
 # --- Environment Variables ---
 if [[ -f "$CONFIG_DIR/pre-reboot-hook.env" ]]; then
-if [[ -f "$CONFIG_DIR/pre-reboot-hook.env" ]]; then
   set -a
-  source "$CONFIG_DIR/pre-reboot-hook.env"
   source "$CONFIG_DIR/pre-reboot-hook.env"
   set +a
 fi
@@ -82,7 +74,6 @@ do_backup() {
     if [[ "${KEEP_LOCAL_BACKUP}" == "true" ]]; then
       mkdir -p "$BACKUP_DIR"
       mv "$tmpfile" "$BACKUP_DIR/${STAMP}_${name}"
-      mv "$tmpfile" "$BACKUP_DIR/${STAMP}_${name}"
     else
       rm -f "$tmpfile"
     fi
@@ -128,8 +119,6 @@ EOF
 
   # MIME 
   {
-    printf 'From:"%s" <%s>\n' "$FROM_NAME" "$FROM_ADDR"
-    printf 'To:%s\n' "$TO_ADDRS"
     printf 'From:"%s" <%s>\n' "$FROM_NAME" "$FROM_ADDR"
     printf 'To:%s\n' "$TO_ADDRS"
     printf 'Subject:%s\n' "$subject"
