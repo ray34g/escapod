@@ -1,98 +1,155 @@
-# pre‑reboot‑hook
+## 日本語版 README（最新版）
 
-システムのシャットダウンや再起動前に、**情報収集・S3バックアップ・SESメール送信**を行う小さなフックスクリプトです。
+# Escapod
 
-**Fedora CoreOS**（/usr が読み取り専用）向けに調整していますが、  
-Podman が入った任意の systemd Linux で動作します。
-
----
-
-## 特長
-- 各種システム情報を収集：uptime、ログインユーザー、ネットワーク、`sysctl -a`、sysstat、Kubernetes / CRI-O / Compose 情報など
-- S3 へのバックアップと SES 経由のメール送信を並列実行
-- シャットダウン時に systemd サービスとして動作し、完了まで処理をブロック
-- `KEEP_LOCAL_BACKUP=true` のとき、ローカルに最新の `.tgz` を 1 つ保持
-- 実行に必要なのは **AWS CLI** のみ
+**システム診断情報を収集し、S3にバックアップし、Amazon SESを通じてスナップショットをメールで送信。  
+予定されたシャットダウン／再起動イベントとシームレスに連携する**  
+**Fedora CoreOS** およびその他の systemd ベースのシステム用の小型・自立型ツールです。
 
 ---
 
-## 構成
-```bash
+## 特徴
+
+* 詳細なスナップショット: uptime、ユーザー、ネットワーク、sysctl、sysstat、Kubernetes / CRI-O / Compose 情報など
+* S3 バックアップ **および** SES メール通知（オプション。各フェーズごとに有効/無効を切替可能）
+* **3つのフェーズ**で実行：
+  * `scheduled` – 再起動が予定されたとき
+  * `pre-reboot` – シャットダウン／再起動が始まる直前
+  * `post-reboot` – 再起動が完了した後（実際に再起動が実行された場合のみ）
+* **ローテーションされたログ** と **オプションのローカルバックアップ** を保持
+* 柔軟な環境変数ベースの構成（`escapod.env`）
+* systemd で呼び出された場合、**systemd-notify** による通知に対応
+* 実行時依存性は **AWS CLI** のみ
+
+---
+
+## ディレクトリ構造
+
+```shell
 escapod/
-├── escapod.sh          # メインスクリプト
-└── systemd/
-    └── escapod.service # 再起動シーケンスで実行
+├── escapod.sh
+├── escapod.env
+├── systemd/
+│   ├── escapod.service
+│   ├── escapod-scheduled.service
+│   ├── escapod-scheduled.path
+│   └── escapod-post.service
+├── install.sh
+├── README.md
+├── README.ja.md
+└── .gitignore
 ```
 
+------
 
-## 前提
+## 前提条件
 
-| 項目                              | 備考                                                      |
-| --------------------------------- | --------------------------------------------------------- |
-| Fedora CoreOS 39+ または任意のsystemd対応ディストリ | systemd ベースの Linux であれば OK                        |
-| AWS CLI v2                        | S3 および SES の送信に必要                                |
-| `/root/.aws/{config,credentials}` | `aws configure` で事前に作成                             |
-| オプションツール                  | `sysstat`, `kubelet`, `crio` などが導入されていれば収集が拡張される |
+| コンポーネント                            | 備考                                                |
+| ----------------------------------------- | --------------------------------------------------- |
+| Fedora CoreOS 39以上                      | または任意の systemd ベースのディストリビューション |
+| AWS **SES** & **S3**                      | SMTP 資格情報とターゲットバケット                   |
+| `/root/.aws/{config,credentials}`         | `aws configure` で作成                              |
+| オプション：`cri-o`, `docker-compose`など | インストールされていれば自動検出                    |
 
----
 
-## インストール手順
 
-```bash
+------
+
+## インストール
+
+```shell
 git clone https://github.com/ray34g/escapod.git
 cd escapod
 
-sudo mkdir -p /etc/escapod
-sudo cp escapod.sh /usr/local/bin/
-sudo chmod 755 /usr/local/bin/escapod.sh
-
-sudo cp systemd/escapod.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable escapod.service
+sudo ./install.sh
 ```
 
-> **Ignition / Butane** を使う場合：スクリプトを `/usr/local/bin/` に配置し、Butane YAML でユニットを有効化してください。
+この操作により：
+
+- `escapod.sh` を `/usr/local/bin/` に配置
+- `escapod.env` を `/etc/escapod/` にコピー
+- すべての systemd ユニットをインストール＆有効化：
+  - `escapod.service`
+  - `escapod-scheduled.service`
+  - `escapod-scheduled.path`
+  - `escapod-post.service`
+
+> **注意**: `install.sh` スクリプトは既存の `escapod.env` ファイルを保持します。
 
 ------
 
-設定方法
+## フェーズ（動作タイミング）
 
-`/usr/local/bin/escapod.sh` の冒頭にある変数を編集します。
+| フェーズ      | トリガー                                 | 説明                                         |
+| ------------- | ---------------------------------------- | -------------------------------------------- |
+| `scheduled`   | 新しいシャットダウン／再起動予定イベント | 再起動がスケジュールされたことを記録し通知   |
+| `pre-reboot`  | 実際のシャットダウン／再起動中           | 再起動前にデータをバックアップし通知         |
+| `post-reboot` | 再起動成功後                             | 実際に再起動された場合のみ、ログと通知を実行 |
 
-| 変数名                  | 内容                      | 例                                      |
-| ----------------------- | ------------------------- | ---------------------------------------- |
-| `BACKUP_PATHS`          | アーカイブ対象ディレクトリ | `(/etc /var/lib/kubelet)`                |
-| `S3_BUCKET` / `S3_PREFIX` | S3アップロード先            | `my-bkt` / `pre_reboot/$(hostname)`      |
-| `KEEP_LOCAL_BACKUP`     | ローカルに保存するか       | `true` / `false`                         |
-| `TO_ADDRS` / `FROM_ADDR`| SES宛先と送信元アドレス     | `ops@example.test`                       |
-| `AWS_REGION`            | AWSリージョン              | `ap-northeast-1`                         |
+
+
+**再起動の検出方法:**
+ `pre-reboot` フェーズでフラグを設定します。
+ システムがこのフラグなしで起動した場合（コールドブートなど）、`post-reboot` のアクションは実行されません。
+
+------
+
+## 設定
+
+動作を調整するには、`/etc/escapod/escapod.env` を編集します。
+
+| 変数                      | 説明                            | 例                                     |
+| ------------------------- | ------------------------------- | -------------------------------------- |
+| `BACKUP_PATHS`            | バックアップするディレクトリ    | `(/etc /var/lib/kubelet)`              |
+| `S3_BUCKET` / `S3_PREFIX` | S3 の保存先                     | `my-bkt` / `pre_reboot/$(hostname)`    |
+| `KEEP_LOCAL_BACKUP`       | ローカル TGZ アーカイブを保存   | `true` / `false`                       |
+| `MAIL_ENABLED`            | SES メールを送信する            | `true` / `false`                       |
+| `BACKUP_ENABLED`          | バックアップ処理を有効にする    | `true` / `false`                       |
+| `TO_ADDRS` / `FROM_ADDR`  | SES のメールアドレス            | `ops@example.test`                     |
+| `AWS_REGION`              | SES/S3 用のリージョン           | `ap-northeast-1`                       |
+| `AWS_CLI_PATH`            | AWS CLI のバイナリまたは Podman | `/usr/bin/aws` または `podman run ...` |
+
 
 
 ------
 
-## テスト実行
+## 手動テスト
 
-```bash
-sudo /usr/local/bin/escapod.sh
-# メールの受信と S3 バケットを確認
+任意のフェーズを手動でテストできます：
+
+```shell
+sudo /usr/local/bin/escapod.sh scheduled
+sudo /usr/local/bin/escapod.sh pre-reboot
+sudo /usr/local/bin/escapod.sh post-reboot
 ```
+
+ログの確認：
+
+```shell
+cat /var/log/escapod/info_*.log
+```
+
+メール配信と S3 バックアップ（有効化されていれば）も確認してください。
 
 ------
 
 ## アンインストール
 
-```bash
-sudo systemctl disable escapod.service
-sudo rm -f /etc/systemd/system/escapod.service
+```shell
+sudo systemctl disable escapod.service escapod-scheduled.service escapod-post.service
+sudo systemctl disable --now escapod-scheduled.path
+sudo rm -f /etc/systemd/system/escapod*.service /etc/systemd/system/escapod-scheduled.path
+sudo rm -f /usr/local/bin/escapod.sh
 sudo rm -rf /etc/escapod /var/log/escapod
-```
+```shell
 
----
+------
 
-## 拡張方法
+## 拡張
 
-- ログ収集を追加したい場合は `log …` 行を追記
-- S3 ライフサイクルルールで保持期限の制御も可能
-- `send_mail()` 関数を編集して、他の送信方法に差し替えも可能
+- `escapod.sh` にさらに `log ...` 行を追加して追加診断情報を収集可能。
+- `send_mail()` 関数をカスタマイズし、他のメールツールにも対応可能。
+- S3 ライフサイクルルールを利用して古いバックアップを期限切れに設定可能。
+- 高度な AWS CLI 設定のために Podman を統合可能。
 
-安全・快適な再起動運用にお役立てください！
+安全で観測可能な再起動をお楽しみください！
