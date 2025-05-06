@@ -18,10 +18,10 @@ Podman が入った任意の systemd Linux で動作します。
 
 ## 構成
 ```bash
-pre-reboot-hook/
-├── pre-reboot-hook.sh          # メインスクリプト
+escapod/
+├── escapod.sh          # メインスクリプト
 └── systemd/
-    └── pre-reboot-hook.service # 再起動シーケンスで実行
+    └── escapod.service # 再起動シーケンスで実行
 ```
 
 
@@ -39,16 +39,16 @@ pre-reboot-hook/
 ## インストール手順
 
 ```bash
-git clone https://github.com/ray34g/pre-reboot-hook.git
-cd pre-reboot-hook
+git clone https://github.com/ray34g/escapod.git
+cd escapod
 
-sudo mkdir -p /etc/pre-reboot-hook
-sudo cp pre-reboot-hook.sh /usr/local/bin/
-sudo chmod 755 /usr/local/bin/pre-reboot-hook.sh
+sudo mkdir -p /etc/escapod
+sudo cp escapod.sh /usr/local/bin/
+sudo chmod 755 /usr/local/bin/escapod.sh
 
-sudo cp systemd/pre-reboot-hook.service /etc/systemd/system/
+sudo cp systemd/escapod.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable pre-reboot-hook.service
+sudo systemctl enable escapod.service
 ```
 
 > **Ignition / Butane** を使う場合：スクリプトを `/usr/local/bin/` に配置し、Butane YAML でユニットを有効化してください。
@@ -57,7 +57,7 @@ sudo systemctl enable pre-reboot-hook.service
 
 設定方法
 
-`/usr/local/bin/pre-reboot-hook.sh` の冒頭にある変数を編集します。
+`/usr/local/bin/escapod.sh` の冒頭にある変数を編集します。
 
 | 変数名                  | 内容                      | 例                                      |
 | ----------------------- | ------------------------- | ---------------------------------------- |
@@ -73,7 +73,7 @@ sudo systemctl enable pre-reboot-hook.service
 ## テスト実行
 
 ```bash
-sudo /usr/local/bin/pre-reboot-hook.sh
+sudo /usr/local/bin/escapod.sh
 # メールの受信と S3 バケットを確認
 ```
 
@@ -82,9 +82,9 @@ sudo /usr/local/bin/pre-reboot-hook.sh
 ## アンインストール
 
 ```bash
-sudo systemctl disable pre-reboot-hook.service
-sudo rm -f /etc/systemd/system/pre-reboot-hook.service
-sudo rm -rf /etc/pre-reboot-hook /var/log/pre-reboot-hook
+sudo systemctl disable escapod.service
+sudo rm -f /etc/systemd/system/escapod.service
+sudo rm -rf /etc/escapod /var/log/escapod
 ```
 
 ---

@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for new shutdown/reboot schedule
+
+[Path]
+PathChanged=/run/systemd/shutdown/scheduled
+
+[Install]
+WantedBy=multi-user.target

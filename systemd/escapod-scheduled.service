@@ -1,0 +1,7 @@
+[Unit]
+Description=Log and extract shutdown/reboot schedule details
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/escapod-scheduled.sh

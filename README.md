@@ -1,8 +1,8 @@
-# pre‑reboot‑hook
+# Escapod
 
 Small, self‑contained helper that **collects system information, backs it up to S3,  
 e‑mails the snapshot via Amazon SES, and integrates cleanly into system shutdown/reboot**  
-with full support for **Fedora CoreOS** or any systemd-based host.
+with support for **Fedora CoreOS** or any systemd-based host.
 
 ---
 
@@ -19,10 +19,10 @@ with full support for **Fedora CoreOS** or any systemd-based host.
 ## Directory layout
 
 ```bash
-pre-reboot-hook/
-├── pre-reboot-hook.sh
+escapod/
+├── escapod.sh
 ├── systemd/
-│   └── pre-reboot-hook.service
+│   └── escapod.service
 └── LICENSE
 ```
 
@@ -43,16 +43,16 @@ pre-reboot-hook/
 ## Installation
 
 ```bash
-git clone https://github.com/ray34g/pre-reboot-hook.git
-cd pre-reboot-hook
+git clone https://github.com/ray34g/escapod.git
+cd escapod
 
-sudo mkdir -p /etc/pre-reboot-hook
-sudo cp pre-reboot-hook.sh /usr/local/bin/
-sudo chmod 755 /usr/local/bin/pre-reboot-hook.sh
+sudo mkdir -p /etc/escapod
+sudo cp escapod.sh /usr/local/bin/
+sudo chmod 755 /usr/local/bin/escapod.sh
 
-sudo cp systemd/pre-reboot-hook.service /etc/systemd/system/
+sudo cp systemd/escapod.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable pre-reboot-hook.service
+sudo systemctl enable escapod.service
 ```
 
 > **Ignition/Butane** users: embed the same files under `/usr/local/bin/…` and enable the units in your Butane spec.
@@ -61,7 +61,7 @@ sudo systemctl enable pre-reboot-hook.service
 
 ## Configuration
 
-Edit the variables at the top of `/opt/pre-reboot-hook/pre-reboot-hook.sh`.
+Edit the variables at the top of `/opt/escapod/escapod.sh`.
 
 | Variable                  | Description        | Example                             |
 | ------------------------- | ------------------ | ----------------------------------- |
@@ -76,7 +76,7 @@ Edit the variables at the top of `/opt/pre-reboot-hook/pre-reboot-hook.sh`.
 ## Manual test
 
 ```
-sudo /usr/local/bin/pre-reboot-hook/pre-reboot-hook.sh
+sudo /usr/local/bin/escapod/escapod.sh
 # check mail & s3://$S3_BUCKET/$S3_PREFIX/
 ```
 
@@ -85,9 +85,9 @@ sudo /usr/local/bin/pre-reboot-hook/pre-reboot-hook.sh
 ## Uninstall
 
 ```
-sudo systemctl disable pre-reboot-hook.service
-sudo rm -f /etc/systemd/system/pre-reboot-hook.service
-sudo rm -rf /etc/pre-reboot-hook /var/log/pre-reboot-hook
+sudo systemctl disable escapod.service
+sudo rm -f /etc/systemd/system/escapod.service
+sudo rm -rf /etc/escapod /var/log/escapod
 ```
 
 ------

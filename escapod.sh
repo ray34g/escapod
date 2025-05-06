@@ -2,16 +2,18 @@
 set -euo pipefail
 
 STAMP="${STAMP:-$(date '+%Y%m%d%H%M%S')}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/pre-reboot-hook}"
-LOGDIR="${LOGDIR:-/var/log/pre-reboot-hook}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/escapod}"
+LOGDIR="${LOGDIR:-/var/log/escapod}"
 LOGFILE="$LOGDIR/info_${STAMP}.log"
 PREV="$LOGDIR/info_prev.log"
-BACKUP_DIR="${BACKUP_DIR:-/var/log/pre-reboot-hook/backups}"
+BACKUP_DIR="${BACKUP_DIR:-/var/log/escapod/backups}"
+
+AWS_CLI="${AWS_CLI_PATH:-/usr/bin/aws}"
 
 # --- Environment Variables ---
-if [[ -f "$CONFIG_DIR/pre-reboot-hook.env" ]]; then
+if [[ -f "$CONFIG_DIR/escapod.env" ]]; then
   set -a
-  source "$CONFIG_DIR/pre-reboot-hook.env"
+  source "$CONFIG_DIR/escapod.env"
   set +a
 fi
 
@@ -58,17 +60,9 @@ do_backup() {
     chmod 644 "$tmpfile"
     # --- S3 Upload ---
     if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
-      aws s3 cp "$(realpath "$tmpfile")" \
+      $AWS_CLI s3 cp "$(realpath "$tmpfile")" \
     "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/${name}" \
     --region "$AWS_REGION" || true
-      # podman run --rm --network host \
-      #   --security-opt label=disable \
-      #   -e AWS_DEFAULT_REGION="$AWS_REGION" \
-      #   -v /root/.aws:/root/.aws:ro \
-      #   -v "$(dirname "$tmpfile"):/var/tmp:ro" \
-      #   amazon/aws-cli \
-      #     s3 cp "/var/tmp/$(basename "$tmpfile")" \
-      #     "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/${name}"
     fi
 
     if [[ "${KEEP_LOCAL_BACKUP}" == "true" ]]; then
@@ -148,18 +142,9 @@ EOF
 EOF
 
   # Send
-  aws ses send-raw-email \
+  $AWS_CLI ses send-raw-email \
   --cli-input-json "file://$(realpath "$jsonfile")" \
   --region "$AWS_REGION" || true
-  # podman run --rm --network host \
-  #   --security-opt label=disable \
-  #   -e HOME=/root \
-  #   -e AWS_DEFAULT_REGION="$AWS_REGION" \
-  #   -v /root/.aws:/root/.aws:ro \
-  #   -v /var/tmp:/mail:ro \
-  #   amazon/aws-cli \
-  #     ses send-raw-email \
-  #       --cli-input-json file:///mail/$(basename "$jsonfile")
 
   # Cleanup
   rm -f "$bodyfile" "$emailfile" "$encodedfile" "$jsonfile"
