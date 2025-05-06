@@ -142,6 +142,10 @@ send_mail() {
   local attachfile="$LOG_FILE"
   local boundary="===BOUNDARY_${TIMESTAMP}==="
 
+  if [[ "$PHASE" == "scheduled" ]]; then
+    local attachfile="$REBOOT_FLAG"
+  fi
+
   # BODY
   cat >"$bodyfile" <<EOF
 [$(hostname)] | Phase: ${PHASE^^}
