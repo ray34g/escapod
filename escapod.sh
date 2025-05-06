@@ -41,7 +41,6 @@ parse_scheduled_info() {
 
 case "$PHASE" in
   scheduled)
-    parse_scheduled_info
     SUBJECT_MESSAGE="[$(hostname)] Reboot has been scheduled at $SCHEDULE_DATETIME"
     ;;
   pre-reboot)
@@ -61,9 +60,10 @@ case "$PHASE" in
     ;;
 esac
 
+mkdir -p "$LOG_DIR"
+
 # --- Log ---
 create_log() {
-  mkdir -p "$LOG_DIR"
 
   # --- Rotation ---
   [[ -f "$LOG_FILE" ]] && mv -f "$LOG_FILE" "$PREV" || true
@@ -132,6 +132,7 @@ create_backup() {
 
 # --- SES Email (aws-cli) ---
 send_mail() {
+  parse_scheduled_info
   [[ "${MAIL_ENABLED:-true}" != "true" ]] && return
   
   local subject=$SUBJECT_MESSAGE
