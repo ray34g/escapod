@@ -6,12 +6,14 @@ if [[ -n "${NOTIFY_SOCKET:-}" ]]; then
 fi
 
 TIMESTAMP="${TIMESTAMP:-$(date '+%Y%m%d%H%M%S')}"
+SCHEDULE_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
 CONFIG_DIR="${CONFIG_DIR:-/etc/escapod}"
 LOG_DIR="${LOG_DIR:-/var/log/escapod}"
 LOG_FILE="$LOG_DIR/info_${TIMESTAMP}.log"
 PREV="$LOG_DIR/info_prev.log"
 BACKUP_DIR="${BACKUP_DIR:-/var/log/escapod/backups}"
 REBOOT_FLAG="$LOG_DIR/reboot-requested.log"
+AWS_CLI="${AWS_CLI_PATH:-/usr/bin/aws}"
 
 # --- Phase: scheduled / pre-reboot / post-reboot
 PHASE="${1:-pre-reboot}"
@@ -24,6 +26,17 @@ if [[ -f "$CONFIG_DIR/escapod.env" ]]; then
 fi
 
 # --- Parse shutdown schedule if phase is scheduled ---
+parse_scheduled_info() {
+  SCHEDULE_INFO_FILE="/run/systemd/shutdown/scheduled"
+  SCHEDULE_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
+
+  if [[ -f "$SCHEDULE_INFO_FILE" ]]; then
+    # WALLMESSAGE から人間向け日時を抜き出す
+    WALLMESSAGE=$(grep "^WALLMESSAGE=" "$SCHEDULE_INFO_FILE" | cut -d'=' -f2- | tr -d '"')
+    SCHEDULE_DATETIME=$(echo "$WALLMESSAGE" | grep -oE '[A-Z][a-z]{2} .*' || echo "(unknown)")
+  fi
+}
+
 case "$PHASE" in
   scheduled)
     parse_scheduled_info
@@ -196,17 +209,6 @@ Backup and logs collected.
 "
   if [[ -n "${NOTIFY_SOCKET:-}" ]]; then
     systemd-notify --reboot-message="$msg" || true
-  fi
-}
-
-parse_scheduled_info() {
-  SCHEDULE_INFO_FILE="/run/systemd/shutdown/scheduled"
-  SCHEDULE_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
-
-  if [[ -f "$SCHEDULE_INFO_FILE" ]]; then
-    # WALLMESSAGE から人間向け日時を抜き出す
-    WALLMESSAGE=$(grep "^WALLMESSAGE=" "$SCHEDULE_INFO_FILE" | cut -d'=' -f2- | tr -d '"')
-    SCHEDULE_DATETIME=$(echo "$WALLMESSAGE" | grep -oE '[A-Z][a-z]{2} .*' || echo "(unknown)")
   fi
 }
 
