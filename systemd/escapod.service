@@ -6,9 +6,9 @@ After=network-online.target
 ConditionPathExists=/usr/local/bin/escapod.sh
 
 [Service]
-Type=oneshot
+Type=notify
 EnvironmentFile=/etc/escapod/escapod.env
-ExecStart=/usr/local/bin/escapod.sh
+ExecStart=/usr/local/bin/escapod.sh pre-reboot
 TimeoutSec=30s
 
 [Install]

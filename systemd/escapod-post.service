@@ -1,0 +1,13 @@
+[Unit]
+Description=Escapod post-reboot phase
+After=network-online.target
+ConditionPathExists=/usr/local/bin/escapod.sh
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/escapod/escapod.env
+ExecStart=/usr/local/bin/escapod.sh post-reboot
+TimeoutSec=60s
+
+[Install]
+WantedBy=multi-user.target

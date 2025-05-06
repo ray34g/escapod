@@ -1,7 +1,8 @@
 [Unit]
-Description=Log and extract shutdown/reboot schedule details
-After=network-online.target
+Description=Escapod run when shutdown/reboot schedule changes
+ConditionPathExists=/usr/local/bin/escapod.sh
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/escapod-scheduled.sh
+EnvironmentFile=/etc/escapod/escapod.env
+ExecStart=/usr/local/bin/escapod.sh scheduled

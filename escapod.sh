@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STAMP="${STAMP:-$(date '+%Y%m%d%H%M%S')}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/escapod}"
-LOGDIR="${LOGDIR:-/var/log/escapod}"
-LOGFILE="$LOGDIR/info_${STAMP}.log"
-PREV="$LOGDIR/info_prev.log"
-BACKUP_DIR="${BACKUP_DIR:-/var/log/escapod/backups}"
+if [[ -n "${NOTIFY_SOCKET:-}" ]]; then
+    systemd-notify --ready || true
+fi
 
-AWS_CLI="${AWS_CLI_PATH:-/usr/bin/aws}"
+TIMESTAMP="${TIMESTAMP:-$(date '+%Y%m%d%H%M%S')}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/escapod}"
+LOG_DIR="${LOG_DIR:-/var/log/escapod}"
+LOG_FILE="$LOG_DIR/info_${TIMESTAMP}.log"
+PREV="$LOG_DIR/info_prev.log"
+BACKUP_DIR="${BACKUP_DIR:-/var/log/escapod/backups}"
+REBOOT_FLAG="$LOG_DIR/reboot-requested.log"
+
+# --- Phase: scheduled / pre-reboot / post-reboot
+PHASE="${1:-pre-reboot}"
 
 # --- Environment Variables ---
 if [[ -f "$CONFIG_DIR/escapod.env" ]]; then
@@ -17,83 +23,117 @@ if [[ -f "$CONFIG_DIR/escapod.env" ]]; then
   set +a
 fi
 
-mkdir -p "$LOGDIR"
+# --- Parse shutdown schedule if phase is scheduled ---
+case "$PHASE" in
+  scheduled)
+    parse_scheduled_info
+    SUBJECT_MESSAGE="[$(hostname)] Reboot has been scheduled at $SCHEDULE_DATETIME"
+    ;;
+  pre-reboot)
+    SUBJECT_MESSAGE="[$(hostname)] Reboot is starting now"
+    mkdir -p /var/lib/escapod
+    touch "$REBOOT_FLAG"
+    ;;
+  post-reboot)
+    SUBJECT_MESSAGE="[$(hostname)] Reboot has completed successfully"
+    if [[ ! -f "$REBOOT_FLAG" ]]; then
+      echo "No reboot flag found. Skipping post-reboot actions."
+      exit 0
+    fi
+    ;;
+  *)
+    SUBJECT_MESSAGE="[$(hostname)] Escapod report ($PHASE)"
+    ;;
+esac
 
-#----- Rotation -----
-[[ -f "$LOGFILE" ]] && mv -f "$LOGFILE" "$PREV" || true
+# --- Log ---
+create_log() {
+  mkdir -p "$LOG_DIR"
 
-log() { printf "\n[%s]\n" "$1" >>"$LOGFILE"; shift; "$@" >>"$LOGFILE" 2>&1 || true; }
+  # --- Rotation ---
+  [[ -f "$LOG_FILE" ]] && mv -f "$LOG_FILE" "$PREV" || true
 
-{
-  echo "===== PRE‑REBOOT SNAPSHOT  $STAMP ====="
-  echo "Host   : $(hostname)"
-  echo "Kernel : $(uname -r)"
-} >"$LOGFILE"
+  log() {
+    printf "\n[%s]\n" "$1" >>"$LOG_FILE"
+    shift
+    "$@" >>"$LOG_FILE" 2>&1 || true
+  }
 
-log uptime          uptime
-log timedatectl     timedatectl
-log who             who
-log disk            df -hT
-log memory          free -h
-log "top‑5 cpu"     bash -c "ps -eo pid,comm,%cpu --sort=-%cpu | head -n6"
-log "top‑5 mem"     bash -c "ps -eo pid,comm,%mem --sort=-%mem | head -n6"
-log "ip addr"       ip -brief addr
-log listening       ss -tunlp
+  AWS_CLI="${AWS_CLI_PATH:-/usr/bin/aws}"
 
-log lscpu           lscpu
-log lsblk           lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
-log dmesg-tail      dmesg -T | tail -n100
-#--- Kubernetes / CRI-O / docker-compose ---
-command -v kubectl &>/dev/null  && log "k8s pods"  kubectl get pods -A --no-headers
-command -v crictl  &>/dev/null  && log "cri-o ctr" crictl ps
-command -v docker-compose &>/dev/null && log "compose ps" docker-compose ps --all
+  # --- Header ---
+  {
+    echo "===== ESCAPOD PHASE: ${PHASE^^} | TIMESTAMP: $TIMESTAMP ====="
+    echo "Host   : $(hostname)"
+    echo "Kernel : $(uname -r)"
+    echo "Scheduled time : $SCHEDULE_DATETIME"
+  } >"$LOG_FILE"
 
-#----- Backup -----
-do_backup() {
+  log uptime          uptime
+  log timedatectl     timedatectl
+  log who             who
+  log disk            df -hT
+  log memory          free -h
+  log "top-5 cpu"     bash -c "ps -eo pid,comm,%cpu --sort=-%cpu | head -n6"
+  log "top-5 mem"     bash -c "ps -eo pid,comm,%mem --sort=-%mem | head -n6"
+  log "ip addr"       ip -brief addr
+  log listening       ss -tunlp
+  log lscpu           lscpu
+  log lsblk           lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
+  log dmesg-tail      dmesg -T | tail -n100
+  #--- Kubernetes / CRI-O / docker-compose ---
+  command -v kubectl &>/dev/null  && log "k8s pods"  kubectl get pods -A --no-headers
+  command -v crictl  &>/dev/null  && log "cri-o ctr" crictl ps
+  command -v docker-compose &>/dev/null && log "compose ps" docker-compose ps --all
+}
+
+# --- Backup ---
+create_backup() {
+  [[ "${BACKUP_ENABLED:-true}" != "true" ]] && return
   [[ -z "${BACKUP_PATHS:-}" ]] && return
+
   IFS=' ' read -ra paths <<< "$BACKUP_PATHS"
   for path in "${paths[@]}"; do
-    [[ -e "$path" ]] || { echo "skip $path" >>"$LOGFILE"; continue; }
+    [[ -e "$path" ]] || { echo "skip $path" >>"$LOG_FILE"; continue; }
     name="$(basename "$path").tgz"
     tmpfile="$(mktemp "/var/tmp/${name}.XXXX")"
     tar -czf "$tmpfile" --absolute-names --preserve-permissions "$path"
     chmod 644 "$tmpfile"
     # --- S3 Upload ---
-    if [[ "${UPLOAD_TO_S3}" == "true" ]]; then
-      $AWS_CLI s3 cp "$(realpath "$tmpfile")" \
-    "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/${name}" \
-    --region "$AWS_REGION" || true
+    if [[ "${UPLOAD_TO_S3:-false}" == "true" ]]; then
+      "$AWS_CLI" s3 cp "$(realpath "$tmpfile")" \
+      "s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${TIMESTAMP}/${name}" \
+      --region "$AWS_REGION" || true
     fi
 
-    if [[ "${KEEP_LOCAL_BACKUP}" == "true" ]]; then
+    if [[ "${KEEP_LOCAL_BACKUP:-true}" == "true" ]]; then
       mkdir -p "$BACKUP_DIR"
-      mv "$tmpfile" "$BACKUP_DIR/${STAMP}_${name}"
+      mv "$tmpfile" "$BACKUP_DIR/${TIMESTAMP}_${name}"
     else
       rm -f "$tmpfile"
     fi
-
   done
 }
 
-#----- SES Email (Podman + aws-cli) -----
+# --- SES Email (aws-cli) ---
 send_mail() {
-  local subject="[system] $(hostname) is Scheduled to Reboot at $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')"
-  local bodyfile="/var/tmp/mail_body_${STAMP}.txt"
-  local emailfile="/var/tmp/email_raw_${STAMP}.txt"
-  local encodedfile="/var/tmp/email_raw_${STAMP}.b64"
-  local jsonfile="/var/tmp/email_raw_${STAMP}.json"
-  local attachfile="$LOGFILE"
+  [[ "${MAIL_ENABLED:-true}" != "true" ]] && return
+  
+  local subject=$SUBJECT_MESSAGE
+  local bodyfile="/var/tmp/mail_body_${TIMESTAMP}.txt"
+  local emailfile="/var/tmp/mail_raw_${TIMESTAMP}.txt"
+  local encodedfile="/var/tmp/mail_raw_${TIMESTAMP}.b64"
+  local jsonfile="/var/tmp/mail_raw_${TIMESTAMP}.json"
+  local attachfile="$LOG_FILE"
+  local boundary="===BOUNDARY_${TIMESTAMP}==="
 
-  local boundary="===BOUNDARY_${STAMP}==="
-
-  # BODY 
+  # BODY
   cat >"$bodyfile" <<EOF
-[$(hostname)] is scheduled to reboot shortly.
+[$(hostname)] | Phase: ${PHASE^^}
 
-⏰ Time: $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')
 📍 Host: $(hostname)
 🖥️ Kernel: $(uname -r)
-📦 Snapshot ID: ${STAMP}
+📦 Snapshot ID: ${TIMESTAMP}
 
 The following diagnostic and configuration information has been collected:
  - System status (uptime, load, users)
@@ -102,34 +142,33 @@ The following diagnostic and configuration information has been collected:
  - Running processes and services
  - System settings (sysctl, mount info)
  - Kubernetes / CRI-O / Docker Compose (if applicable)
+ - Backup: ${BACKUP_ENABLED:-true} | S3 Upload: ${UPLOAD_TO_S3:-false}
+ - Mail notification: ${MAIL_ENABLED:-true}
 
-$( [[ "${UPLOAD_TO_S3:-}" == "true" ]] && echo "Backup uploaded to: s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
-$( [[ "${KEEP_LOCAL_BACKUP:-}" == "true" ]] && echo "Local backup saved to: ${BACKUP_DIR}" )
+$( [[ "${UPLOAD_TO_S3:-}" == "true" ]] && echo "S3: s3://${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${TIMESTAMP}/" )
+$( [[ "${KEEP_LOCAL_BACKUP:-}" == "true" ]] && echo "Local backup: ${BACKUP_DIR}" )
 
-(This message was automatically generated.)
+(This message was automatically generated by Escapod.)
 EOF
 
   chmod 644 "$bodyfile"
 
-  # MIME 
+  # MIME
   {
     printf 'From:"%s" <%s>\n' "$FROM_NAME" "$FROM_ADDR"
     printf 'To:%s\n' "$TO_ADDRS"
     printf 'Subject:%s\n' "$subject"
     printf 'MIME-Version: 1.0\n'
     printf 'Content-Type: multipart/mixed; boundary="%s"\n' "$boundary"
-    printf '\n'
-    printf '%s\n' "--${boundary}"
-    printf 'Content-Type: text/plain; charset=UTF-8\n'
-    printf 'Content-Transfer-Encoding: 7bit\n\n'
+    printf '\n--%s\n' "$boundary"
+    printf 'Content-Type: text/plain; charset=UTF-8\n\n'
     cat "$bodyfile"
-    printf '\n%s\n' "--${boundary}"
+    printf '\n--%s\n' "$boundary"
     printf 'Content-Type: text/plain; name="%s"\n' "$(basename "$attachfile")"
-    printf 'Content-Description: Reboot Log\n'
     printf 'Content-Disposition: attachment; filename="%s"\n' "$(basename "$attachfile")"
     printf 'Content-Transfer-Encoding: base64\n\n'
     base64 "$attachfile"
-    printf '\n%s\n' "--${boundary}--"
+    printf '\n--%s--\n' "$boundary"
   } > "$emailfile"
 
   base64 -w 0 "$emailfile" > "$encodedfile"
@@ -141,32 +180,55 @@ EOF
 }
 EOF
 
-  # Send
-  $AWS_CLI ses send-raw-email \
+  "$AWS_CLI" ses send-raw-email \
   --cli-input-json "file://$(realpath "$jsonfile")" \
   --region "$AWS_REGION" || true
 
-  # Cleanup
   rm -f "$bodyfile" "$emailfile" "$encodedfile" "$jsonfile"
 }
 
-notify_terminals() {
-  msg="
-[$(hostname)] will reboot in 1 minute.
-
-Time: $(date -d '+1 min' '+%Y-%m-%d %H:%M:%S')
-Please save your work and log out.
-
-System status and configurations have been archived.
-$( [[ "${UPLOAD_TO_S3:-}" == "true" ]] && echo "Backup sent to S3: ${S3_BUCKET}/${S3_PREFIX}/$(hostname)_${STAMP}/" )
-$( [[ "${KEEP_LOCAL_BACKUP:-}" == "true" ]] && echo "Local copy saved in: ${BACKUP_DIR}" )
+# --- Notify ---
+notify_terminal_sessions() {
+  local msg="
+[$(hostname)] will reboot soon.
+Phase: ${PHASE^^}
+Backup and logs collected.
 "
-  echo "$msg" | wall
-  logger "$msg"
+  if [[ -n "${NOTIFY_SOCKET:-}" ]]; then
+    systemd-notify --reboot-message="$msg" || true
+  fi
 }
 
-do_backup &  bp=$!
-send_mail  &  mp=$!
-wait $bp $mp
+parse_scheduled_info() {
+  SCHEDULE_INFO_FILE="/run/systemd/shutdown/scheduled"
+  SCHEDULE_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
 
-notify_terminals
+  if [[ -f "$SCHEDULE_INFO_FILE" ]]; then
+    # WALLMESSAGE から人間向け日時を抜き出す
+    WALLMESSAGE=$(grep "^WALLMESSAGE=" "$SCHEDULE_INFO_FILE" | cut -d'=' -f2- | tr -d '"')
+    SCHEDULE_DATETIME=$(echo "$WALLMESSAGE" | grep -oE '[A-Z][a-z]{2} .*' || echo "(unknown)")
+  fi
+}
+
+  # --- Run ---
+case "$PHASE" in
+  scheduled)
+    create_log & lp=$!
+    create_backup & bp=$!
+    send_mail & mp=$!
+    wait $lp $bp $mp
+    notify_terminal_sessions
+    ;;
+  pre-reboot)
+    create_log & lp=$!
+    create_backup & bp=$!
+    send_mail & mp=$!
+    wait $lp $bp $mp
+    notify_terminal_sessions
+    ;;
+  post-reboot)
+    send_mail
+    logger "Escapod: Reboot has completed successfully."
+    rm -f "$REBOOT_FLAG"
+    ;;
+esac
