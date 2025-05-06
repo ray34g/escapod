@@ -29,11 +29,13 @@ fi
 parse_scheduled_info() {
   SCHEDULE_INFO_FILE="/run/systemd/shutdown/scheduled"
   SCHEDULE_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
+  WALLMESSAGE="(none)"
 
   if [[ -f "$SCHEDULE_INFO_FILE" ]]; then
-    # WALLMESSAGE から人間向け日時を抜き出す
-    WALLMESSAGE=$(grep "^WALLMESSAGE=" "$SCHEDULE_INFO_FILE" | cut -d'=' -f2- | tr -d '"')
-    SCHEDULE_DATETIME=$(echo "$WALLMESSAGE" | grep -oE '[A-Z][a-z]{2} .*' || echo "(unknown)")
+    WALLMESSAGE=$(grep "^WALL_MESSAGE=" "$SCHEDULE_INFO_FILE" | cut -d'=' -f2- | tr -d '"')
+    # decode \xe3 → UTF-8
+    WALLMESSAGE=$(printf '%b' "$WALLMESSAGE")
+    WALLMESSAGE=${WALLMESSAGE:-"(none)"}
   fi
 }
 
@@ -143,6 +145,7 @@ send_mail() {
   # BODY
   cat >"$bodyfile" <<EOF
 [$(hostname)] | Phase: ${PHASE^^}
+📝 WALLMESSAGE: ${WALLMESSAGE}
 
 📍 Host: $(hostname)
 🖥️ Kernel: $(uname -r)
